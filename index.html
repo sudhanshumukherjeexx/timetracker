@@ -968,6 +968,8 @@ function save() {
   if (supabaseClient && authSession) scheduleCloudSave();
 }
 
+let _supabaseInitDone = false;
+
 async function initSupabase() {
   if (!supabaseConfigured()) return;
   try {
@@ -975,9 +977,19 @@ async function initSupabase() {
     supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       auth: { detectSessionInUrl: true, flowType: 'pkce' }
     });
+
+    // Register listener FIRST so we don't miss post-init events,
+    // but skip SIGNED_IN during initialization — the PKCE code-exchange
+    // fires SIGNED_IN before the client's HTTP layer is fully ready,
+    // causing loadFromCloud() to fail with a 401/RLS error.
+    // getSession() below properly awaits initialization and is our
+    // authoritative source for the initial session.
     supabaseClient.auth.onAuthStateChange(async (event, session) => {
+      if (!_supabaseInitDone && event === 'SIGNED_IN') return;
+
       // Ignore auth events while a sign-out is in progress
       if (signingOut && event !== 'SIGNED_OUT') return;
+
       if (event === 'TOKEN_REFRESHED' && session) {
         authSession = session;
         updateAuthUI();
@@ -988,19 +1000,24 @@ async function initSupabase() {
         return;
       }
       if (event === 'SIGNED_OUT') {
-        // If signOutUser() is driving, it will call clearSession() itself;
-        // only handle unexpected / external sign-outs here.
+        // If signOutUser() is driving, it calls clearSession() itself
         if (!signingOut) {
           await clearSession();
         }
         return;
       }
     });
+
+    // getSession() awaits internal initialization (including PKCE exchange)
+    // and returns the fully-ready session with valid tokens.
     const { data: { session } } = await supabaseClient.auth.getSession();
+    _supabaseInitDone = true;
+
     if (session) await applySession(session);
     else updateAuthUI();
   } catch (e) {
     console.warn('Supabase init failed', e);
+    _supabaseInitDone = true;
     updateAuthUI();
   }
 }
@@ -1008,10 +1025,27 @@ async function initSupabase() {
 async function loadFromCloud() {
   if (!supabaseClient || !authSession) return;
   const uid = authSession.user.id;
-  const { data, error } = await supabaseClient.from('user_timers').select('events, settings').eq('user_id', uid).maybeSingle();
+
+  // Retry once after a short delay — covers transient 401s from token propagation
+  let data = null, error = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const result = await supabaseClient.from('user_timers')
+      .select('events, settings').eq('user_id', uid).maybeSingle();
+    data = result.data;
+    error = result.error;
+    if (!error) break;
+    if (attempt === 0) {
+      console.warn('Cloud load attempt 1 failed, retrying…', error);
+      await new Promise(r => setTimeout(r, 800));
+      // Refresh the session token before retry
+      const { data: refreshed } = await supabaseClient.auth.getSession();
+      if (refreshed?.session) authSession = refreshed.session;
+    }
+  }
+
   if (error) {
-    console.warn('Cloud load failed', error);
-    toast('Could not load cloud data');
+    console.warn('Cloud load failed after retries', error);
+    toast('Could not load cloud data — using local');
     return;
   }
   const guestEvents = events.slice();
@@ -1020,12 +1054,13 @@ async function loadFromCloud() {
   if (!data) {
     events = realGuest;
     settings = guestSettings;
-    await supabaseClient.from('user_timers').upsert({
+    const { error: upsertErr } = await supabaseClient.from('user_timers').upsert({
       user_id: uid,
       events,
       settings,
       updated_at: new Date().toISOString()
     }, { onConflict: 'user_id' });
+    if (upsertErr) console.warn('Initial cloud save failed', upsertErr);
     saveLocalOnly();
     return;
   }
@@ -1037,12 +1072,13 @@ async function loadFromCloud() {
   } else if (realGuest.length > 0) {
     events = realGuest;
     settings = guestSettings;
-    await supabaseClient.from('user_timers').upsert({
+    const { error: upsertErr } = await supabaseClient.from('user_timers').upsert({
       user_id: uid,
       events,
       settings,
       updated_at: new Date().toISOString()
     }, { onConflict: 'user_id' });
+    if (upsertErr) console.warn('Cloud save failed', upsertErr);
   } else {
     events = [];
     settings = validateSettings({ ...defaultSettings(), ...(data.settings && typeof data.settings === 'object' ? data.settings : {}) });
@@ -1050,19 +1086,7 @@ async function loadFromCloud() {
   saveLocalOnly();
 }
 
-let _lastAppliedUserId = null;
-
 async function applySession(session) {
-  // Guard: don't re-apply the same session (Supabase can fire
-  // INITIAL_SESSION + SIGNED_IN for the same login)
-  const uid = session?.user?.id;
-  if (uid && uid === _lastAppliedUserId && authSession) {
-    authSession = session; // update token silently
-    updateAuthUI();
-    return;
-  }
-  _lastAppliedUserId = uid || null;
-
   authSession = session;
   clearLoginPromptTimer();
   document.removeEventListener('click', onDocumentClickLoginPrompt, true);
@@ -1080,7 +1104,7 @@ async function applySession(session) {
 }
 
 async function clearSession() {
-  // Guard: if already signed out, just ensure UI is up to date
+  // Guard: if already signed out, just ensure UI is correct
   if (!authSession) {
     updateAuthUI();
     return;
@@ -1088,14 +1112,11 @@ async function clearSession() {
 
   authSession = null;
   gcalAccessToken = null;
-  _lastAppliedUserId = null;
 
-  // Reset to a clean guest state — don't reload localStorage because it
-  // still contains the signed-in user's cloud data from saveLocalOnly().
+  // Reset to clean guest state — localStorage still has the signed-in
+  // user's cloud data from saveLocalOnly(), so we can't reload from it.
   events = [];
   settings = defaultSettings();
-
-  // Allow demo data to be re-seeded for the guest experience
   localStorage.removeItem('chronos_seeded');
   saveLocalOnly();
   maybeSeedData();
@@ -1199,39 +1220,26 @@ async function signOutUser() {
   signingOut = true;
   const client = supabaseClient;
 
-  // 1. Attempt the Supabase local sign-out with a timeout guard
-  let localSignOutOk = false;
-  try {
-    const result = await Promise.race([
-      client.auth.signOut({ scope: 'local' }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('signOut timeout')), 5000)),
-    ]);
-    if (result?.error) {
-      console.warn('signOut returned error', result.error);
-    } else {
-      localSignOutOk = true;
-    }
-  } catch (e) {
-    console.warn('signOut local failed or timed out', e);
-  }
-
-  // 2. Force-clear auth tokens from storage regardless of API result
+  // 1. IMMEDIATELY clear local state for instant UI feedback.
+  //    Don't wait for the server — the user should never stare at
+  //    an unresponsive button for 5 seconds.
   clearSupabaseAuthStorage();
-
-  // 3. Reset in-memory session and re-render UI as signed-out
-  //    (onAuthStateChange SIGNED_OUT defers to us while signingOut === true)
   await clearSession();
-
-  // 4. Release the flag BEFORE the global sign-out so that any
-  //    further SIGNED_OUT events from global sign-out are harmless no-ops
-  //    (authSession is already null → clearSession() short-circuits).
   signingOut = false;
+  toast('Signed out');
 
-  // 5. Fire-and-forget global sign-out for other devices
-  void client.auth.signOut({ scope: 'global' }).catch(() => {});
-
-  // 6. User feedback
-  toast(localSignOutOk ? 'Signed out' : 'Signed out (offline — session cleared locally)');
+  // 2. Fire-and-forget: revoke the session on the server.
+  //    If this fails, the token expires on its own (JWT expiry).
+  //    We do this AFTER clearing local state because signOut()
+  //    needs the token that was in storage before we wiped it —
+  //    however the Supabase client already cached it in memory
+  //    from the previous session, so the call still works.
+  try {
+    await Promise.race([
+      client.auth.signOut({ scope: 'local' }),
+      new Promise(r => setTimeout(r, 4000)),   // abandon after 4s, don't block
+    ]);
+  } catch (_) { /* best-effort */ }
 }
 
 function shouldShowLoginPrompt() {
@@ -1265,8 +1273,6 @@ function closeLoginPromptDismiss() {
 }
 
 function loginPromptSignInGoogle() {
-  // Close the prompt and mark it dismissed BEFORE the OAuth redirect
-  // so it won't reappear if the redirect is slow or fails.
   closeLoginPromptDismiss();
   void signInWithGoogle();
 }
@@ -1288,7 +1294,7 @@ function onDocumentClickLoginPrompt(e) {
   if (!activatable) return;
   if (activatable.closest('#login-prompt-modal')) return;
   if (activatable.closest('#confirm-modal')) return;
-  // Don't intercept if prompt wouldn't actually open (e.g. already open, or on settings screen)
+  // Don't swallow the click if the prompt wouldn't actually open
   if (currentScreen === 'settings') return;
   const modal = document.getElementById('login-prompt-modal');
   if (!modal || modal.classList.contains('open')) return;
