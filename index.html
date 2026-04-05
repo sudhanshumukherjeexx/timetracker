@@ -3,17 +3,21 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://accounts.google.com https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src https://*.supabase.co https://www.googleapis.com https://accounts.google.com; img-src 'self' data: blob: https://*.googleusercontent.com; frame-src https://accounts.google.com;"/>
+<meta http-equiv="Strict-Transport-Security" content="max-age=31536000; includeSubDomains"/>
+<meta http-equiv="X-Content-Type-Options" content="nosniff"/>
+<meta name="referrer" content="strict-origin-when-cross-origin"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
-<meta name="apple-mobile-web-app-title" content="CHRONOS"/>
+<meta name="apple-mobile-web-app-title" content="TYME"/>
 <meta name="theme-color" content="#0e0e0e"/>
-<title>CHRONOS</title>
+<title>TYME</title>
 
 <!-- PWA Manifest inline -->
 <script>
 const manifestData = {
-  name: "CHRONOS",
-  short_name: "CHRONOS",
+  name: "TYME",
+  short_name: "TYME",
   description: "Track time since moments that matter",
   start_url: ".",
   display: "standalone",
@@ -26,7 +30,10 @@ const manifestData = {
 };
 const blob = new Blob([JSON.stringify(manifestData)], {type: 'application/json'});
 const manifestURL = URL.createObjectURL(blob);
-document.write(`<link rel="manifest" href="${manifestURL}">`);
+const manifestLink = document.createElement('link');
+manifestLink.rel = 'manifest';
+manifestLink.href = manifestURL;
+document.head.appendChild(manifestLink);
 </script>
 
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Manrope:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
@@ -360,10 +367,11 @@ tailwind.config = {
 <div id="screen-dashboard" class="screen active">
   <div style="padding: 0 24px 24px; position: relative; z-index: 1;">
 
-    <!-- Date + Epoch -->
-    <div class="fade-up fade-up-1" style="margin-bottom: 32px; display: flex; flex-direction: column; gap: 4px;">
-      <p style="font-family: 'Inter'; font-size: 10px; letter-spacing: 0.3em; text-transform: uppercase; color: #81ecff; margin: 0;">Temporal Status</p>
-      <h2 id="dash-date" style="font-family: 'Space Grotesk'; font-size: clamp(36px,10vw,56px); font-weight: 700; letter-spacing: -0.03em; margin: 0; line-height: 1;">—</h2>
+    <!-- Today's date + live time -->
+    <div class="fade-up fade-up-1" style="margin-bottom: 32px; display: flex; flex-direction: column; gap: 6px;">
+      <p style="font-family: 'Inter'; font-size: 10px; letter-spacing: 0.3em; text-transform: uppercase; color: #81ecff; margin: 0;">Today's Date</p>
+      <h2 id="dash-date" style="font-family: 'Space Grotesk'; font-size: clamp(28px,8vw,44px); font-weight: 700; letter-spacing: -0.03em; margin: 0; line-height: 1.1;">—</h2>
+      <p id="dash-date-sub" class="ticker" style="font-family: 'Inter'; font-size: 11px; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; color: #777575; margin: 4px 0 0;">—</p>
     </div>
 
     <!-- Events grid -->
@@ -543,9 +551,38 @@ tailwind.config = {
 <div id="screen-settings" class="screen">
   <div style="padding: 0 24px 24px; max-width: 480px; margin: 0 auto; position: relative; z-index: 1;">
 
-    <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 40px;">
+    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 40px; gap: 12px;">
       <h2 style="font-family: 'Space Grotesk'; font-size: 44px; font-weight: 700; letter-spacing: -0.03em; text-transform: uppercase; margin: 0; line-height: 1;">Settings</h2>
-      <p style="font-family: 'Inter'; font-size: 10px; color: #adaaaa; letter-spacing: 0.2em; margin: 0;">v1.0.0</p>
+      <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
+        <p style="font-family: 'Inter'; font-size: 10px; color: #adaaaa; letter-spacing: 0.2em; margin: 0;">v1.0.0</p>
+        <button type="button" onclick="closeSettings()" aria-label="Close settings" style="width: 36px; height: 36px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.1); background: #1a1919; color: #adaaaa; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; -webkit-tap-highlight-color: transparent;">
+          <span class="material-symbols-outlined" style="font-size: 22px;">close</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Account & cloud sync (hidden unless Supabase is configured — no dev messages shown to users) -->
+    <div id="auth-account-section" style="display: none; margin-bottom: 32px;">
+      <h3 style="font-family: 'Inter'; font-size: 10px; letter-spacing: 0.3em; text-transform: uppercase; color: #81ecff; margin: 0 0 16px 4px;">Account</h3>
+      <div id="auth-card" style="background: #1a1919; border-radius: 14px; padding: 18px 20px; border: 0.5px solid rgba(255,255,255,0.06);">
+        <p id="auth-status-label" style="font-family: 'Manrope'; font-size: 12px; color: #adaaaa; margin: 0 0 14px; line-height: 1.45;">Loading…</p>
+        <div id="auth-actions-block">
+          <div id="auth-signed-out-block" style="display: flex; flex-direction: column; gap: 10px;">
+            <button type="button" onclick="signInWithGoogle()" style="width: 100%; padding: 14px 16px; border-radius: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: #fff; font-family: 'Inter'; font-size: 13px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 10px; -webkit-tap-highlight-color: transparent;">
+              <span class="material-symbols-outlined" style="font-size: 20px;">account_circle</span>
+              Continue with Google
+            </button>
+            <div style="display: flex; gap: 8px; align-items: stretch;">
+              <input id="auth-email" type="email" inputmode="email" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Email for magic link" class="chrono-input" style="flex: 1; font-size: 13px; padding: 12px 14px; text-transform: none;"/>
+              <button type="button" onclick="sendMagicLink()" style="padding: 12px 16px; border-radius: 12px; background: rgba(129,236,255,0.12); border: 1px solid rgba(129,236,255,0.25); color: #81ecff; font-family: 'Inter'; font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; cursor: pointer; white-space: nowrap; -webkit-tap-highlight-color: transparent;">Send link</button>
+            </div>
+          </div>
+          <div id="auth-signed-in-block" style="display: none; flex-direction: column; gap: 12px;">
+            <p id="auth-user-email" style="font-family: 'Space Grotesk'; font-size: 15px; font-weight: 600; margin: 0; color: #fff;"></p>
+            <button type="button" id="auth-sign-out-btn" onclick="void signOutUser()" style="width: 100%; padding: 14px; border-radius: 12px; background: rgba(119,117,117,0.15); border: 1px solid rgba(255,255,255,0.08); color: #adaaaa; font-family: 'Inter'; font-size: 13px; font-weight: 600; cursor: pointer; -webkit-tap-highlight-color: transparent;">Sign out</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- System Preferences -->
@@ -664,7 +701,7 @@ tailwind.config = {
       Reset All Data
     </button>
 
-    <p style="text-align: center; font-family: 'Inter'; font-size: 10px; color: #262626; letter-spacing: 0.3em; text-transform: uppercase; margin-top: 32px;">CHRONOS // TIME IS ABSOLUTE</p>
+    <p style="text-align: center; font-family: 'Inter'; font-size: 10px; color: #262626; letter-spacing: 0.3em; text-transform: uppercase; margin-top: 32px;">TYME // TIME IS ABSOLUTE</p>
 
   </div>
 </div>
@@ -679,11 +716,12 @@ tailwind.config = {
       <span class="material-symbols-outlined" style="font-size: 26px;">arrow_back</span>
     </button>
     <span class="material-symbols-outlined icon-fill" style="color: #00FF41; font-size: 22px;">blur_on</span>
-    <span style="font-family: 'Space Grotesk'; font-weight: 700; font-size: 20px; letter-spacing: 0.2em; color: #00FF41; text-transform: uppercase;">CHRONOS</span>
+    <span style="font-family: 'Space Grotesk'; font-weight: 700; font-size: 20px; letter-spacing: 0.2em; color: #00FF41; text-transform: uppercase;">TYME</span>
   </div>
-  <div style="width: 36px; height: 36px; border-radius: 50%; overflow: hidden; border: 1px solid rgba(255,255,255,0.1); background: #1a1919; display: flex; align-items: center; justify-content: center;">
-    <span class="material-symbols-outlined" style="color: #adaaaa; font-size: 20px;">person</span>
-  </div>
+  <button type="button" id="top-bar-user" onclick="navigate('settings')" title="Settings" style="width: 36px; height: 36px; border-radius: 50%; overflow: hidden; border: 1px solid rgba(255,255,255,0.1); background: #1a1919; display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; flex-shrink: 0; -webkit-tap-highlight-color: transparent;">
+    <span class="material-symbols-outlined" id="top-bar-user-icon" style="color: #adaaaa; font-size: 20px;">person</span>
+    <img id="top-bar-user-img" alt="" width="36" height="36" style="display: none; width: 100%; height: 100%; object-fit: cover;"/>
+  </button>
 </div>
 
 <!-- ============================================================
@@ -725,12 +763,77 @@ tailwind.config = {
 </div>
 
 <!-- ============================================================
+     SIGN-IN PROMPT (guests: 30s timer + first button tap)
+     ============================================================ -->
+<div id="login-prompt-modal" class="modal-overlay" style="z-index: 210;">
+  <div class="modal-sheet">
+    <div style="width: 40px; height: 4px; background: #494847; border-radius: 2px; margin: 0 auto 24px;"></div>
+    <h3 style="font-family: 'Space Grotesk'; font-size: 22px; font-weight: 700; margin: 0 0 8px; letter-spacing: -0.02em; text-transform: uppercase; color: #fff;">Sign in to TYME</h3>
+    <p style="font-family: 'Manrope'; font-size: 14px; color: #adaaaa; margin: 0 0 20px; line-height: 1.5;">Sync your counters across devices. Use Google or email in Settings, or stay on this device only.</p>
+    <div style="display: flex; flex-direction: column; gap: 10px;">
+      <button type="button" onclick="loginPromptSignInGoogle()" style="width: 100%; padding: 16px; border-radius: 12px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); color: #fff; font-family: 'Inter'; font-size: 14px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 10px; -webkit-tap-highlight-color: transparent;">
+        <span class="material-symbols-outlined" style="font-size: 22px;">account_circle</span>
+        Continue with Google
+      </button>
+      <button type="button" onclick="loginPromptOpenSettings()" style="width: 100%; padding: 14px; border-radius: 12px; background: rgba(129,236,255,0.1); border: 1px solid rgba(129,236,255,0.22); color: #81ecff; font-family: 'Inter'; font-size: 13px; font-weight: 600; cursor: pointer; -webkit-tap-highlight-color: transparent;">More sign-in options</button>
+      <button type="button" onclick="closeLoginPromptDismiss()" style="width: 100%; padding: 14px; border-radius: 12px; background: #1a1919; border: 1px solid rgba(255,255,255,0.08); color: #adaaaa; font-family: 'Inter'; font-size: 13px; font-weight: 600; cursor: pointer; -webkit-tap-highlight-color: transparent;">Maybe later — this device only</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
      JAVASCRIPT
      ============================================================ -->
 <script>
+// ─── SUPABASE CONFIG ─────────────────────────────────────────────────────────
+// Create a project at https://supabase.com, run supabase_setup.sql, enable Email + Google auth.
+// Google sign-in shows "Sign in to …" from YOUR Google Cloud OAuth consent screen (app name + logo).
+// Fix generic *.supabase.co text: Supabase → Authentication → Providers → Google → paste your own
+// OAuth Client ID + Secret from console.cloud.google.com (consent screen app name: "TYME").
+// Authorized redirect URI in Google Cloud must include https://<project-ref>.supabase.co/auth/v1/callback
+// Serve over http://localhost (or any http(s) origin), not file:// — file origins break OAuth/session behavior.
+const SUPABASE_URL = 'https://yokfokokmelomgvbedfz.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlva2Zva29rbWVsb21ndmJlZGZ6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzMzY1MzEsImV4cCI6MjA5MDkxMjUzMX0.fl1Fwwwxq_u6hb6O2qqUAoBk5dkEAyYonvFTSfTNHvo';
+
+function supabaseConfigured() {
+  const url = (typeof SUPABASE_URL === 'string' ? SUPABASE_URL : '').trim();
+  const key = (typeof SUPABASE_ANON_KEY === 'string' ? SUPABASE_ANON_KEY : '').trim();
+  if (!url || !key) return false;
+  if (/YOUR_PROJECT|YOUR_SUPABASE|placeholder|changeme/i.test(url + key)) return false;
+  if (!/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(url)) return false;
+  if (key.length < 32) return false;
+  return true;
+}
+
+function supabaseProjectRef() {
+  const url = typeof SUPABASE_URL === 'string' ? SUPABASE_URL : '';
+  const m = url.match(/https:\/\/([a-z0-9-]+)\.supabase\.co/i);
+  return m ? m[1] : null;
+}
+
+function clearSupabaseAuthStorage() {
+  const ref = supabaseProjectRef();
+  if (!ref) return;
+  const prefix = `sb-${ref}-`;
+  function wipe(storage) {
+    try {
+      for (let i = storage.length - 1; i >= 0; i--) {
+        const k = storage.key(i);
+        if (k && k.startsWith(prefix)) storage.removeItem(k);
+      }
+    } catch (e) { /* quota / private mode */ }
+  }
+  wipe(localStorage);
+  wipe(sessionStorage);
+}
+
+function defaultSettings() {
+  return { notifications: true, liveTicker: true, gcalSync: false, gcalClientId: '' };
+}
+
 // ─── STATE ────────────────────────────────────────────────────────────────────
 let events = [];
-let settings = { notifications: true, liveTicker: true, gcalSync: false, gcalClientId: '' };
+let settings = defaultSettings();
 let currentScreen = 'dashboard';
 let previousScreen = 'dashboard';
 let currentDetailId = null;
@@ -740,6 +843,14 @@ let gcalAccessToken = null;
 let gcalSyncEnabled = false;
 let pendingConfirm = null;
 
+let supabaseClient = null;
+let authSession = null;
+let signingOut = false;
+let cloudSaveTimer = null;
+let dashDateInterval = null;
+let loginPromptTimerId = null;
+const LOGIN_PROMPT_DISMISS_KEY = 'tyme_login_prompt_dismissed';
+
 // Category colors cycling
 const CAT_COLORS = ['cat-green','cat-pink','cat-cyan','cat-orange','cat-purple'];
 const CAT_ICONS = {
@@ -748,21 +859,410 @@ const CAT_ICONS = {
   self: 'spa', study: 'school', default: 'label'
 };
 
+// ─── SECURITY UTILITIES ──────────────────────────────────────────────────────
+
+// HTML entity escaping — prevents XSS when injecting user strings into innerHTML
+function escapeHTML(str) {
+  if (typeof str !== 'string') return '';
+  const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '/': '&#x2F;', '`': '&#96;' };
+  return str.replace(/[&<>"'\/`]/g, c => map[c]);
+}
+
+// Input validation — enforce safe characters and length for event names and categories
+function sanitizeEventName(raw) {
+  if (typeof raw !== 'string') return '';
+  return raw.replace(/[<>"'`\\]/g, '').trim().slice(0, 40);
+}
+function sanitizeCategory(raw) {
+  if (typeof raw !== 'string') return '';
+  return raw.replace(/[<>"'`\\]/g, '').trim().slice(0, 20);
+}
+
+// Validate date string format (YYYY-MM-DD only)
+function isValidDateStr(str) {
+  return typeof str === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(str) && !isNaN(new Date(str + 'T00:00:00'));
+}
+
+// Rate limiting for auth actions — prevents brute force
+const authRateLimiter = {
+  attempts: [],
+  maxAttempts: 5,
+  windowMs: 60000, // 1 minute
+  check() {
+    const now = Date.now();
+    this.attempts = this.attempts.filter(t => now - t < this.windowMs);
+    if (this.attempts.length >= this.maxAttempts) return false;
+    this.attempts.push(now);
+    return true;
+  }
+};
+
+// Validate data loaded from storage or cloud (defense against tampered data)
+function validateEvents(arr) {
+  if (!Array.isArray(arr)) return [];
+  return arr.filter(ev => {
+    if (!ev || typeof ev !== 'object') return false;
+    if (typeof ev.id !== 'string' || ev.id.length > 50) return false;
+    if (typeof ev.name !== 'string' || ev.name.length > 100) return false;
+    if (!isValidDateStr(ev.date)) return false;
+    if (ev.category !== null && ev.category !== undefined && typeof ev.category !== 'string') return false;
+    if (ev.category && ev.category.length > 50) return false;
+    return true;
+  });
+}
+
+function validateSettings(obj) {
+  const def = defaultSettings();
+  if (!obj || typeof obj !== 'object') return def;
+  return {
+    notifications: typeof obj.notifications === 'boolean' ? obj.notifications : def.notifications,
+    liveTicker: typeof obj.liveTicker === 'boolean' ? obj.liveTicker : def.liveTicker,
+    gcalSync: typeof obj.gcalSync === 'boolean' ? obj.gcalSync : def.gcalSync,
+    gcalClientId: typeof obj.gcalClientId === 'string' && obj.gcalClientId.length < 200 ? obj.gcalClientId : def.gcalClientId,
+  };
+}
+
 // ─── PERSISTENCE ──────────────────────────────────────────────────────────────
-function save() {
+function saveLocalOnly() {
   try {
     localStorage.setItem('chronos_events', JSON.stringify(events));
     localStorage.setItem('chronos_settings', JSON.stringify(settings));
   } catch(e) { console.warn('Storage error', e); }
 }
 
-function load() {
+function loadGuestLocal() {
   try {
     const ev = localStorage.getItem('chronos_events');
     const st = localStorage.getItem('chronos_settings');
-    if (ev) events = JSON.parse(ev);
-    if (st) settings = { ...settings, ...JSON.parse(st) };
-  } catch(e) { console.warn('Load error', e); }
+    if (ev) events = validateEvents(JSON.parse(ev));
+    else events = [];
+    if (st) settings = validateSettings({ ...defaultSettings(), ...JSON.parse(st) });
+    else settings = defaultSettings();
+  } catch(e) {
+    console.warn('Load error', e);
+    events = [];
+    settings = defaultSettings();
+  }
+}
+
+function scheduleCloudSave() {
+  clearTimeout(cloudSaveTimer);
+  cloudSaveTimer = setTimeout(() => { flushCloudSave(); }, 400);
+}
+
+async function flushCloudSave() {
+  if (!supabaseClient || !authSession) return;
+  const uid = authSession.user.id;
+  const { error } = await supabaseClient.from('user_timers').upsert({
+    user_id: uid,
+    events,
+    settings,
+    updated_at: new Date().toISOString()
+  }, { onConflict: 'user_id' });
+  if (error) console.warn('Cloud save failed', error);
+}
+
+function save() {
+  saveLocalOnly();
+  if (supabaseClient && authSession) scheduleCloudSave();
+}
+
+async function initSupabase() {
+  if (!supabaseConfigured()) return;
+  try {
+    const { createClient } = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm');
+    supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: { detectSessionInUrl: true, flowType: 'pkce' }
+    });
+    supabaseClient.auth.onAuthStateChange(async (event, session) => {
+      // Ignore auth events while a sign-out is in progress
+      if (signingOut && event !== 'SIGNED_OUT') return;
+      if (event === 'TOKEN_REFRESHED' && session) {
+        authSession = session;
+        updateAuthUI();
+        return;
+      }
+      if (event === 'SIGNED_IN' && session) {
+        await applySession(session);
+        return;
+      }
+      if (event === 'SIGNED_OUT') {
+        await clearSession();
+        return;
+      }
+    });
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    if (session) await applySession(session);
+    else updateAuthUI();
+  } catch (e) {
+    console.warn('Supabase init failed', e);
+    updateAuthUI();
+  }
+}
+
+async function loadFromCloud() {
+  if (!supabaseClient || !authSession) return;
+  const uid = authSession.user.id;
+  const { data, error } = await supabaseClient.from('user_timers').select('events, settings').eq('user_id', uid).maybeSingle();
+  if (error) {
+    console.warn('Cloud load failed', error);
+    toast('Could not load cloud data');
+    return;
+  }
+  const guestEvents = events.slice();
+  const guestSettings = { ...settings };
+  if (!data) {
+    if (guestEvents.length > 0) {
+      events = guestEvents;
+      settings = guestSettings;
+      await supabaseClient.from('user_timers').upsert({
+        user_id: uid,
+        events,
+        settings,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'user_id' });
+    }
+    saveLocalOnly();
+    return;
+  }
+  const cloudEvents = validateEvents(Array.isArray(data.events) ? data.events : []);
+  const cloudHasData = cloudEvents.length > 0;
+  if (cloudHasData) {
+    events = cloudEvents;
+    settings = validateSettings({ ...defaultSettings(), ...(data.settings && typeof data.settings === 'object' ? data.settings : {}) });
+  } else if (guestEvents.length > 0) {
+    events = guestEvents;
+    settings = guestSettings;
+    await supabaseClient.from('user_timers').upsert({
+      user_id: uid,
+      events,
+      settings,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'user_id' });
+  } else {
+    events = [];
+    settings = validateSettings({ ...defaultSettings(), ...(data.settings && typeof data.settings === 'object' ? data.settings : {}) });
+  }
+  saveLocalOnly();
+}
+
+async function applySession(session) {
+  authSession = session;
+  clearLoginPromptTimer();
+  document.removeEventListener('click', onDocumentClickLoginPrompt, true);
+  document.getElementById('login-prompt-modal')?.classList.remove('open');
+  await loadFromCloud();
+  updateAuthUI();
+  if (currentScreen === 'dashboard') renderDashboard();
+  if (currentScreen === 'settings') renderSettings();
+  if (currentScreen === 'add') setupAdd();
+  if (currentScreen === 'detail' && currentDetailId) {
+    const ev = events.find(e => e.id === currentDetailId);
+    if (ev) openDetail(currentDetailId);
+    else navigate('dashboard');
+  }
+}
+
+async function clearSession() {
+  authSession = null;
+  gcalAccessToken = null;
+  loadGuestLocal();
+  updateAuthUI();
+  if (currentScreen === 'dashboard') renderDashboard();
+  if (currentScreen === 'settings') renderSettings();
+  if (currentScreen === 'add') setupAdd();
+  if (currentScreen === 'detail' && currentDetailId) {
+    const ev = events.find(e => e.id === currentDetailId);
+    if (ev) openDetail(currentDetailId);
+    else navigate('dashboard');
+  }
+  startLoginPromptWatchers();
+}
+
+function updateAuthUI() {
+  const section = document.getElementById('auth-account-section');
+  const label = document.getElementById('auth-status-label');
+  const actions = document.getElementById('auth-actions-block');
+  const outBlock = document.getElementById('auth-signed-out-block');
+  const inBlock = document.getElementById('auth-signed-in-block');
+  const emailEl = document.getElementById('auth-user-email');
+  const icon = document.getElementById('top-bar-user-icon');
+  const img = document.getElementById('top-bar-user-img');
+  if (!label) return;
+
+  if (!supabaseConfigured()) {
+    if (section) section.style.display = 'none';
+    if (icon) { icon.style.display = 'block'; }
+    if (img) { img.style.display = 'none'; img.removeAttribute('src'); }
+    return;
+  }
+  if (section) section.style.display = 'block';
+  if (actions) actions.style.display = 'block';
+
+  if (!supabaseClient) {
+    label.textContent = 'Connecting…';
+    if (outBlock) outBlock.style.display = 'flex';
+    if (inBlock) inBlock.style.display = 'none';
+    return;
+  }
+
+  if (authSession) {
+    label.textContent = 'Signed in — your events sync to this account.';
+    if (outBlock) outBlock.style.display = 'none';
+    if (inBlock) inBlock.style.display = 'flex';
+    const u = authSession.user;
+    if (emailEl) emailEl.textContent = u.email || u.user_metadata?.full_name || 'Signed in';
+    const av = u.user_metadata?.avatar_url;
+    if (av && img) {
+      img.src = av;
+      img.style.display = 'block';
+      if (icon) icon.style.display = 'none';
+    } else {
+      if (img) { img.style.display = 'none'; img.removeAttribute('src'); }
+      if (icon) icon.style.display = 'block';
+    }
+  } else {
+    label.textContent = 'Not signed in — data stays on this device only.';
+    if (outBlock) outBlock.style.display = 'flex';
+    if (inBlock) inBlock.style.display = 'none';
+    if (img) { img.style.display = 'none'; img.removeAttribute('src'); }
+    if (icon) icon.style.display = 'block';
+  }
+}
+
+async function signInWithGoogle() {
+  if (!supabaseClient) { toast('Still loading — try again'); return; }
+  if (!authRateLimiter.check()) { toast('Too many attempts — wait a minute'); return; }
+  const redirectTo = window.location.origin + window.location.pathname;
+  const { error } = await supabaseClient.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo }
+  });
+  if (error) toast(error.message);
+}
+
+async function sendMagicLink() {
+  if (!supabaseClient) { toast('Still loading — try again'); return; }
+  if (!authRateLimiter.check()) { toast('Too many attempts — wait a minute'); return; }
+  const input = document.getElementById('auth-email');
+  const email = input ? input.value.trim() : '';
+  if (!email) { toast('Enter your email'); return; }
+  // Basic email format validation
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
+    toast('Enter a valid email address'); return;
+  }
+  const redirectTo = window.location.origin + window.location.pathname;
+  const { error } = await supabaseClient.auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: redirectTo }
+  });
+  if (error) toast(error.message);
+  else toast('Check your email for the sign-in link');
+}
+
+async function signOutUser() {
+  if (signingOut) return;
+  if (!supabaseClient) { toast('Still loading — try again'); return; }
+  signingOut = true;
+  const client = supabaseClient;
+
+  // 1. Attempt the Supabase local sign-out with a timeout guard
+  let localSignOutOk = false;
+  try {
+    const result = await Promise.race([
+      client.auth.signOut({ scope: 'local' }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('signOut timeout')), 5000)),
+    ]);
+    if (result?.error) {
+      console.warn('signOut returned error', result.error);
+    } else {
+      localSignOutOk = true;
+    }
+  } catch (e) {
+    console.warn('signOut local failed or timed out', e);
+  }
+
+  // 2. Force-clear auth tokens from storage regardless of API result
+  clearSupabaseAuthStorage();
+
+  // 3. Reset in-memory session and re-render UI as signed-out
+  await clearSession();
+
+  // 4. Fire-and-forget global sign-out for other devices
+  void client.auth.signOut({ scope: 'global' }).catch(() => {});
+
+  signingOut = false;
+
+  // 5. User feedback
+  toast(localSignOutOk ? 'Signed out' : 'Signed out (offline — session cleared locally)');
+}
+
+function shouldShowLoginPrompt() {
+  if (!supabaseConfigured() || !supabaseClient || authSession) return false;
+  try {
+    if (sessionStorage.getItem(LOGIN_PROMPT_DISMISS_KEY) === '1') return false;
+  } catch (e) { /* private mode */ }
+  return true;
+}
+
+function clearLoginPromptTimer() {
+  if (loginPromptTimerId != null) {
+    clearTimeout(loginPromptTimerId);
+    loginPromptTimerId = null;
+  }
+}
+
+function openLoginPrompt() {
+  if (!shouldShowLoginPrompt()) return;
+  if (currentScreen === 'settings') return;
+  const m = document.getElementById('login-prompt-modal');
+  if (!m || m.classList.contains('open')) return;
+  m.classList.add('open');
+}
+
+function closeLoginPromptDismiss() {
+  try { sessionStorage.setItem(LOGIN_PROMPT_DISMISS_KEY, '1'); } catch (e) { /* ignore */ }
+  document.getElementById('login-prompt-modal')?.classList.remove('open');
+  clearLoginPromptTimer();
+  document.removeEventListener('click', onDocumentClickLoginPrompt, true);
+}
+
+function loginPromptSignInGoogle() {
+  void signInWithGoogle();
+}
+
+function loginPromptOpenSettings() {
+  document.getElementById('login-prompt-modal')?.classList.remove('open');
+  navigate('settings');
+  setTimeout(() => {
+    document.getElementById('auth-account-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 80);
+}
+
+function onDocumentClickLoginPrompt(e) {
+  if (!shouldShowLoginPrompt()) return;
+  const t = e.target;
+  if (!(t instanceof Element)) return;
+  if (t.closest('#screen-settings')) return;
+  const activatable = t.closest('button, input[type="submit"]');
+  if (!activatable) return;
+  if (activatable.closest('#login-prompt-modal')) return;
+  if (activatable.closest('#confirm-modal')) return;
+  e.preventDefault();
+  e.stopPropagation();
+  e.stopImmediatePropagation();
+  openLoginPrompt();
+}
+
+function startLoginPromptWatchers() {
+  clearLoginPromptTimer();
+  document.removeEventListener('click', onDocumentClickLoginPrompt, true);
+  if (!supabaseConfigured() || !shouldShowLoginPrompt()) return;
+  loginPromptTimerId = setTimeout(() => {
+    loginPromptTimerId = null;
+    openLoginPrompt();
+  }, 30000);
+  document.addEventListener('click', onDocumentClickLoginPrompt, true);
 }
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
@@ -832,6 +1332,11 @@ function milestones(days) {
 function navigate(screen, id) {
   previousScreen = currentScreen;
 
+  if (screen !== 'dashboard') {
+    clearInterval(dashDateInterval);
+    dashDateInterval = null;
+  }
+
   // Hide all
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
 
@@ -848,14 +1353,53 @@ function navigate(screen, id) {
   updateNavIcons(screen);
 
   // Screen-specific setup
-  if (screen === 'dashboard') renderDashboard();
+  if (screen === 'dashboard') {
+    renderDashboard();
+    startDashDateTicker();
+  }
   if (screen === 'add') setupAdd();
   if (screen === 'detail' && id) openDetail(id);
   if (screen === 'settings') renderSettings();
 }
 
+function closeSettings() {
+  navigate('dashboard');
+}
+
 function goBack() {
   navigate(previousScreen === 'detail' ? 'dashboard' : previousScreen);
+}
+
+function getElapsedSinceMidnight(now) {
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const ms = now - start;
+  const days = Math.floor(ms / 86400000);
+  const hours = Math.floor((ms % 86400000) / 3600000);
+  const mins = Math.floor((ms % 3600000) / 60000);
+  const secs = Math.floor((ms % 60000) / 1000);
+  return { days, hours, mins, secs };
+}
+
+function updateDashTodayDisplay() {
+  const el = document.getElementById('dash-date');
+  const sub = document.getElementById('dash-date-sub');
+  if (!el) return;
+  const d = new Date();
+  el.textContent = d.toLocaleDateString('en-US', {
+    weekday: 'short', month: 'short', day: 'numeric', year: 'numeric'
+  });
+  if (sub) {
+    const { days, hours, mins, secs } = getElapsedSinceMidnight(d);
+    sub.textContent = `${days}d ${String(hours).padStart(2, '0')}h ${String(mins).padStart(2, '0')}m ${String(secs).padStart(2, '0')}s`;
+  }
+}
+
+function startDashDateTicker() {
+  clearInterval(dashDateInterval);
+  updateDashTodayDisplay();
+  dashDateInterval = setInterval(() => {
+    if (currentScreen === 'dashboard') updateDashTodayDisplay();
+  }, 1000);
 }
 
 function updateNavIcons(screen) {
@@ -879,10 +1423,7 @@ function updateNavIcons(screen) {
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
 function renderDashboard() {
-  // Update date
-  const d = new Date();
-  document.getElementById('dash-date').textContent =
-    d.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
+  updateDashTodayDisplay();
 
   const grid = document.getElementById('events-grid');
   const empty = document.getElementById('empty-state');
@@ -925,8 +1466,8 @@ function renderDashboard() {
     <div style="position: absolute; top: 20px; right: 20px; width: 80px; height: 80px; background: ${featuredHex}12; border-radius: 50%; filter: blur(30px); z-index: 0;"></div>
     <div style="position: absolute; inset: 0; background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, transparent 60%); z-index: 1;"></div>
     <div style="position: relative; z-index: 2;">
-      <span class="cat-pill ${featuredColor}" style="margin-bottom: 12px; display: inline-block;">${featured.category || 'Event'}</span>
-      <h3 style="font-family: 'Space Grotesk'; font-size: 26px; font-weight: 700; margin: 0 0 8px; letter-spacing: -0.02em; text-transform: uppercase;">${featured.name}</h3>
+      <span class="cat-pill ${featuredColor}" style="margin-bottom: 12px; display: inline-block;">${escapeHTML(featured.category || 'Event')}</span>
+      <h3 style="font-family: 'Space Grotesk'; font-size: 26px; font-weight: 700; margin: 0 0 8px; letter-spacing: -0.02em; text-transform: uppercase;">${escapeHTML(featured.name)}</h3>
       <div style="display: flex; align-items: baseline; gap: 8px;">
         <span style="font-family: 'Space Grotesk'; font-size: 52px; font-weight: 900; color: ${featuredHex}; line-height: 1; text-shadow: 0 0 20px ${featuredHex}60;">${featuredData.days}</span>
         <span style="font-family: 'Space Grotesk'; font-size: 18px; color: #adaaaa; text-transform: uppercase; letter-spacing: 0.1em;">${featuredData.days === 1 ? 'Day ago' : 'Days ago'}</span>
@@ -955,9 +1496,9 @@ function renderDashboard() {
       card.innerHTML = `
         <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px;">
           <span class="material-symbols-outlined" style="color: ${hex}; font-size: 20px;">${icon}</span>
-          <span class="cat-pill ${color}">${ev.category || 'Event'}</span>
+          <span class="cat-pill ${color}">${escapeHTML(ev.category || 'Event')}</span>
         </div>
-        <h4 style="font-family: 'Space Grotesk'; font-size: 14px; font-weight: 700; margin: 0 0 8px; text-transform: uppercase; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${ev.name}</h4>
+        <h4 style="font-family: 'Space Grotesk'; font-size: 14px; font-weight: 700; margin: 0 0 8px; text-transform: uppercase; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHTML(ev.name)}</h4>
         <div style="display: flex; align-items: baseline; gap: 4px;">
           <span style="font-family: 'Space Grotesk'; font-size: 28px; font-weight: 900; color: ${hex};">${d.days}</span>
           <span style="font-family: 'Inter'; font-size: 10px; color: #adaaaa; text-transform: uppercase;">days</span>
@@ -973,7 +1514,11 @@ function renderDashboard() {
   const oldestDays = getDaysAndTime(oldest.date).days;
   document.getElementById('dash-count').textContent = String(events.length).padStart(2, '0');
   document.getElementById('dash-oldest').textContent = `${oldestDays}d`;
-  document.getElementById('storage-info') && (document.getElementById('storage-info').textContent = `${events.length} event${events.length !== 1 ? 's' : ''} stored`);
+  const si = document.getElementById('storage-info');
+  if (si) {
+    if (authSession && supabaseClient) si.textContent = `${events.length} event${events.length !== 1 ? 's' : ''} · synced`;
+    else si.textContent = `${events.length} event${events.length !== 1 ? 's' : ''} · this device only`;
+  }
 }
 
 // ─── ADD EVENT ────────────────────────────────────────────────────────────────
@@ -1023,12 +1568,12 @@ function toggleGcalSync() {
 }
 
 function addEvent() {
-  const name = document.getElementById('add-name').value.trim();
+  const name = sanitizeEventName(document.getElementById('add-name').value);
   const date = document.getElementById('add-date').value;
-  const category = document.getElementById('add-category').value.trim();
+  const category = sanitizeCategory(document.getElementById('add-category').value);
 
   if (!name) { toast('Enter an event name'); document.getElementById('add-name').focus(); return; }
-  if (!date) { toast('Pick a date'); return; }
+  if (!date || !isValidDateStr(date)) { toast('Pick a valid date'); return; }
 
   const { days } = getDaysAndTime(date);
   if (days < 0) { toast('Date must be in the past'); return; }
@@ -1062,7 +1607,7 @@ function openDetail(id) {
   // Category pill
   const catWrap = document.getElementById('detail-cat-wrap');
   if (ev.category) {
-    catWrap.innerHTML = `<span class="cat-pill ${colorClass}">${ev.category}</span>`;
+    catWrap.innerHTML = `<span class="cat-pill ${colorClass}">${escapeHTML(ev.category)}</span>`;
   } else { catWrap.innerHTML = ''; }
 
   // Milestones
@@ -1125,9 +1670,9 @@ function shareEvent() {
   const ev = events.find(e => e.id === currentDetailId);
   if (!ev) return;
   const { days, hours, mins } = getDaysAndTime(ev.date);
-  const text = `⏱ CHRONOS\n${ev.name}\n${days} days, ${hours}h ${mins}m since ${formatDate(ev.date)}`;
+  const text = `⏱ TYME\n${ev.name}\n${days} days, ${hours}h ${mins}m since ${formatDate(ev.date)}`;
   if (navigator.share) {
-    navigator.share({ title: 'CHRONOS', text }).catch(() => {});
+    navigator.share({ title: 'TYME', text }).catch(() => {});
   } else {
     navigator.clipboard.writeText(text).then(() => toast('Copied to clipboard'));
   }
@@ -1141,7 +1686,12 @@ function renderSettings() {
   settings.notifications ? notifTog.classList.add('on') : notifTog.classList.remove('on');
   settings.liveTicker ? tickTog.classList.add('on') : tickTog.classList.remove('on');
   updateGCalUI();
-  document.getElementById('storage-info').textContent = `${events.length} event${events.length !== 1 ? 's' : ''} stored`;
+  updateAuthUI();
+  const si = document.getElementById('storage-info');
+  if (si) {
+    if (authSession && supabaseClient) si.textContent = `${events.length} event${events.length !== 1 ? 's' : ''} · synced`;
+    else si.textContent = `${events.length} event${events.length !== 1 ? 's' : ''} · this device only`;
+  }
 }
 
 function toggleSetting(toggleId, key) {
@@ -1175,7 +1725,8 @@ function handleGCalClick() {
 function saveGCalClientId(e) {
   e.stopPropagation();
   const val = document.getElementById('gcal-client-id').value.trim();
-  if (!val || !val.includes('.apps.googleusercontent.com')) {
+  // Validate format: should be a numeric ID followed by .apps.googleusercontent.com
+  if (!val || !/^[0-9a-zA-Z\-_.]+\.apps\.googleusercontent\.com$/.test(val) || val.length > 200) {
     toast('Enter a valid Client ID');
     return;
   }
@@ -1246,8 +1797,8 @@ async function syncToGCal(ev) {
   try {
     const startDate = ev.date;
     const body = {
-      summary: `CHRONOS: ${ev.name}`,
-      description: `Tracked via CHRONOS. Category: ${ev.category || 'None'}.`,
+      summary: `TYME: ${ev.name}`,
+      description: `Tracked via TYME. Category: ${ev.category || 'None'}.`,
       start: { date: startDate },
       end: { date: startDate },
       colorId: '2'
@@ -1271,7 +1822,7 @@ function exportData() {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url; a.download = `chronos-export-${today()}.json`;
+  a.href = url; a.download = `tyme-export-${today()}.json`;
   a.click();
   URL.revokeObjectURL(url);
   toast('Export ready');
@@ -1280,9 +1831,10 @@ function exportData() {
 function confirmReset() {
   openConfirm('Reset All Data?', 'This will permanently delete all your events and settings. This cannot be undone.', () => {
     events = [];
-    settings = { notifications: true, liveTicker: true, gcalSync: false, gcalClientId: '' };
+    settings = defaultSettings();
     gcalAccessToken = null;
-    save();
+    saveLocalOnly();
+    if (supabaseClient && authSession) void flushCloudSave();
     toast('All data reset');
     navigate('dashboard');
   });
@@ -1307,6 +1859,10 @@ document.getElementById('confirm-modal').addEventListener('click', function(e) {
   if (e.target === this) closeModal();
 });
 
+document.getElementById('login-prompt-modal').addEventListener('click', function(e) {
+  if (e.target === this) closeLoginPromptDismiss();
+});
+
 // ─── TOAST ───────────────────────────────────────────────────────────────────
 let toastTimeout;
 function toast(msg) {
@@ -1323,8 +1879,9 @@ function toast(msg) {
 
 // ─── INIT ────────────────────────────────────────────────────────────────────
 function init() {
-  load();
   renderDashboard();
+  startDashDateTicker();
+  updateAuthUI();
 
   // Set today's date in add form
   const dateInput = document.getElementById('add-date');
@@ -1338,12 +1895,13 @@ function init() {
   }, { passive: true });
 }
 
-// ─── SAMPLE DATA (only on first load) ────────────────────────────────────────
+// ─── SAMPLE DATA (guest only, first local load) ──────────────────────────────
 function maybeSeedData() {
+  if (authSession) return;
   if (localStorage.getItem('chronos_seeded')) return;
-  const today = new Date();
+  const todayD = new Date();
   const offset = (d) => {
-    const dt = new Date(today);
+    const dt = new Date(todayD);
     dt.setDate(dt.getDate() - d);
     return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
   };
@@ -1352,12 +1910,17 @@ function maybeSeedData() {
     { id: generateId(), name: 'LAST GYM SESSION', date: offset(5), category: 'Fitness', created: Date.now() },
     { id: generateId(), name: 'TOBACCO FREE', date: offset(256), category: 'Habit', created: Date.now() },
   ];
-  save();
+  saveLocalOnly();
   localStorage.setItem('chronos_seeded', '1');
 }
 
-maybeSeedData();
-init();
+loadGuestLocal();
+(async () => {
+  await initSupabase();
+  maybeSeedData();
+  init();
+  startLoginPromptWatchers();
+})();
 </script>
 </body>
 </html>
