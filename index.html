@@ -792,10 +792,6 @@ tailwind.config = {
 // OAuth Client ID + Secret from console.cloud.google.com (consent screen app name: "TYME").
 // Authorized redirect URI in Google Cloud must include https://<project-ref>.supabase.co/auth/v1/callback
 // Serve over http://localhost (or any http(s) origin), not file:// — file origins break OAuth/session behavior.
-// Production: In Supabase → Authentication → URL configuration, set Site URL to your live app
-// (e.g. https://you.github.io/timetracker/) and add that URL (with and without trailing slash) under
-// Redirect URLs. If Site URL stays on localhost, OAuth will send users to http://localhost:8080/?code=...
-// after Google sign-in instead of your deployed site.
 const SUPABASE_URL = 'https://yokfokokmelomgvbedfz.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlva2Zva29rbWVsb21ndmJlZGZ6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzMzY1MzEsImV4cCI6MjA5MDkxMjUzMX0.fl1Fwwwxq_u6hb6O2qqUAoBk5dkEAyYonvFTSfTNHvo';
 
@@ -998,28 +994,10 @@ async function initSupabase() {
     const { data: { session } } = await supabaseClient.auth.getSession();
     if (session) await applySession(session);
     else updateAuthUI();
-    stripOAuthCallbackParamsFromUrl();
   } catch (e) {
     console.warn('Supabase init failed', e);
     updateAuthUI();
   }
-}
-
-/** Remove ?code= / PKCE params after Supabase has read them so refresh/bookmark does not break auth. */
-function stripOAuthCallbackParamsFromUrl() {
-  try {
-    const u = new URL(window.location.href);
-    if (!u.search) return;
-    const keys = ['code', 'state', 'error', 'error_description'];
-    let changed = false;
-    for (const k of keys) {
-      if (u.searchParams.has(k)) { u.searchParams.delete(k); changed = true; }
-    }
-    if (!changed) return;
-    const qs = u.searchParams.toString();
-    const next = u.pathname + (qs ? `?${qs}` : '') + u.hash;
-    window.history.replaceState({}, document.title, next);
-  } catch (e) { /* ignore */ }
 }
 
 async function loadFromCloud() {
@@ -1187,36 +1165,36 @@ async function signOutUser() {
   if (!supabaseClient) { toast('Still loading — try again'); return; }
   signingOut = true;
   const client = supabaseClient;
+
+  // 1. Attempt the Supabase local sign-out with a timeout guard
   let localSignOutOk = false;
   try {
-    // 1. Attempt the Supabase local sign-out with a timeout guard
-    try {
-      const result = await Promise.race([
-        client.auth.signOut({ scope: 'local' }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('signOut timeout')), 5000)),
-      ]);
-      if (result?.error) {
-        console.warn('signOut returned error', result.error);
-      } else {
-        localSignOutOk = true;
-      }
-    } catch (e) {
-      console.warn('signOut local failed or timed out', e);
+    const result = await Promise.race([
+      client.auth.signOut({ scope: 'local' }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('signOut timeout')), 5000)),
+    ]);
+    if (result?.error) {
+      console.warn('signOut returned error', result.error);
+    } else {
+      localSignOutOk = true;
     }
-
-    // 2. Force-clear auth tokens from storage regardless of API result
-    clearSupabaseAuthStorage();
-
-    // 3. Reset in-memory session and re-render UI as signed-out
-    await clearSession();
-
-    // 4. Fire-and-forget global sign-out for other devices
-    void client.auth.signOut({ scope: 'global' }).catch(() => {});
-
-    toast(localSignOutOk ? 'Signed out' : 'Signed out (offline — session cleared locally)');
-  } finally {
-    signingOut = false;
+  } catch (e) {
+    console.warn('signOut local failed or timed out', e);
   }
+
+  // 2. Force-clear auth tokens from storage regardless of API result
+  clearSupabaseAuthStorage();
+
+  // 3. Reset in-memory session and re-render UI as signed-out
+  await clearSession();
+
+  // 4. Fire-and-forget global sign-out for other devices
+  void client.auth.signOut({ scope: 'global' }).catch(() => {});
+
+  signingOut = false;
+
+  // 5. User feedback
+  toast(localSignOutOk ? 'Signed out' : 'Signed out (offline — session cleared locally)');
 }
 
 function shouldShowLoginPrompt() {
