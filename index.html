@@ -907,6 +907,7 @@ function validateEvents(arr) {
     if (!isValidDateStr(ev.date)) return false;
     if (ev.category !== null && ev.category !== undefined && typeof ev.category !== 'string') return false;
     if (ev.category && ev.category.length > 50) return false;
+    if ('demo' in ev && typeof ev.demo !== 'boolean') return false;
     return true;
   });
 }
@@ -987,7 +988,11 @@ async function initSupabase() {
         return;
       }
       if (event === 'SIGNED_OUT') {
-        await clearSession();
+        // If signOutUser() is driving, it will call clearSession() itself;
+        // only handle unexpected / external sign-outs here.
+        if (!signingOut) {
+          await clearSession();
+        }
         return;
       }
     });
@@ -1011,17 +1016,16 @@ async function loadFromCloud() {
   }
   const guestEvents = events.slice();
   const guestSettings = { ...settings };
+  const realGuest = guestEvents.filter(e => !e.demo);
   if (!data) {
-    if (guestEvents.length > 0) {
-      events = guestEvents;
-      settings = guestSettings;
-      await supabaseClient.from('user_timers').upsert({
-        user_id: uid,
-        events,
-        settings,
-        updated_at: new Date().toISOString()
-      }, { onConflict: 'user_id' });
-    }
+    events = realGuest;
+    settings = guestSettings;
+    await supabaseClient.from('user_timers').upsert({
+      user_id: uid,
+      events,
+      settings,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'user_id' });
     saveLocalOnly();
     return;
   }
@@ -1030,8 +1034,8 @@ async function loadFromCloud() {
   if (cloudHasData) {
     events = cloudEvents;
     settings = validateSettings({ ...defaultSettings(), ...(data.settings && typeof data.settings === 'object' ? data.settings : {}) });
-  } else if (guestEvents.length > 0) {
-    events = guestEvents;
+  } else if (realGuest.length > 0) {
+    events = realGuest;
     settings = guestSettings;
     await supabaseClient.from('user_timers').upsert({
       user_id: uid,
@@ -1046,7 +1050,19 @@ async function loadFromCloud() {
   saveLocalOnly();
 }
 
+let _lastAppliedUserId = null;
+
 async function applySession(session) {
+  // Guard: don't re-apply the same session (Supabase can fire
+  // INITIAL_SESSION + SIGNED_IN for the same login)
+  const uid = session?.user?.id;
+  if (uid && uid === _lastAppliedUserId && authSession) {
+    authSession = session; // update token silently
+    updateAuthUI();
+    return;
+  }
+  _lastAppliedUserId = uid || null;
+
   authSession = session;
   clearLoginPromptTimer();
   document.removeEventListener('click', onDocumentClickLoginPrompt, true);
@@ -1064,9 +1080,26 @@ async function applySession(session) {
 }
 
 async function clearSession() {
+  // Guard: if already signed out, just ensure UI is up to date
+  if (!authSession) {
+    updateAuthUI();
+    return;
+  }
+
   authSession = null;
   gcalAccessToken = null;
-  loadGuestLocal();
+  _lastAppliedUserId = null;
+
+  // Reset to a clean guest state — don't reload localStorage because it
+  // still contains the signed-in user's cloud data from saveLocalOnly().
+  events = [];
+  settings = defaultSettings();
+
+  // Allow demo data to be re-seeded for the guest experience
+  localStorage.removeItem('chronos_seeded');
+  saveLocalOnly();
+  maybeSeedData();
+
   updateAuthUI();
   if (currentScreen === 'dashboard') renderDashboard();
   if (currentScreen === 'settings') renderSettings();
@@ -1186,14 +1219,18 @@ async function signOutUser() {
   clearSupabaseAuthStorage();
 
   // 3. Reset in-memory session and re-render UI as signed-out
+  //    (onAuthStateChange SIGNED_OUT defers to us while signingOut === true)
   await clearSession();
 
-  // 4. Fire-and-forget global sign-out for other devices
-  void client.auth.signOut({ scope: 'global' }).catch(() => {});
-
+  // 4. Release the flag BEFORE the global sign-out so that any
+  //    further SIGNED_OUT events from global sign-out are harmless no-ops
+  //    (authSession is already null → clearSession() short-circuits).
   signingOut = false;
 
-  // 5. User feedback
+  // 5. Fire-and-forget global sign-out for other devices
+  void client.auth.signOut({ scope: 'global' }).catch(() => {});
+
+  // 6. User feedback
   toast(localSignOutOk ? 'Signed out' : 'Signed out (offline — session cleared locally)');
 }
 
@@ -1228,11 +1265,14 @@ function closeLoginPromptDismiss() {
 }
 
 function loginPromptSignInGoogle() {
+  // Close the prompt and mark it dismissed BEFORE the OAuth redirect
+  // so it won't reappear if the redirect is slow or fails.
+  closeLoginPromptDismiss();
   void signInWithGoogle();
 }
 
 function loginPromptOpenSettings() {
-  document.getElementById('login-prompt-modal')?.classList.remove('open');
+  closeLoginPromptDismiss();
   navigate('settings');
   setTimeout(() => {
     document.getElementById('auth-account-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1248,6 +1288,10 @@ function onDocumentClickLoginPrompt(e) {
   if (!activatable) return;
   if (activatable.closest('#login-prompt-modal')) return;
   if (activatable.closest('#confirm-modal')) return;
+  // Don't intercept if prompt wouldn't actually open (e.g. already open, or on settings screen)
+  if (currentScreen === 'settings') return;
+  const modal = document.getElementById('login-prompt-modal');
+  if (!modal || modal.classList.contains('open')) return;
   e.preventDefault();
   e.stopPropagation();
   e.stopImmediatePropagation();
@@ -1906,9 +1950,9 @@ function maybeSeedData() {
     return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
   };
   events = [
-    { id: generateId(), name: 'MY BOSTON VISIT', date: offset(2), category: 'Travel', created: Date.now() },
-    { id: generateId(), name: 'LAST GYM SESSION', date: offset(5), category: 'Fitness', created: Date.now() },
-    { id: generateId(), name: 'TOBACCO FREE', date: offset(256), category: 'Habit', created: Date.now() },
+    { id: generateId(), name: 'MY BOSTON VISIT', date: offset(2), category: 'Travel', created: Date.now(), demo: true },
+    { id: generateId(), name: 'LAST GYM SESSION', date: offset(5), category: 'Fitness', created: Date.now(), demo: true },
+    { id: generateId(), name: 'TOBACCO FREE', date: offset(256), category: 'Habit', created: Date.now(), demo: true },
   ];
   saveLocalOnly();
   localStorage.setItem('chronos_seeded', '1');
